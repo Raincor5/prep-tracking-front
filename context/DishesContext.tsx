@@ -12,7 +12,7 @@ type DishesContextType = {
   undoDish: () => void;
   clearDishes: () => void;
   removeDish: (name: string) => void; // Remove dish by name
-  updateDish: (name: string, quantity: number) => void; // Update dish quantity by name
+  updateDish: (name: string, quantity: number, ingredients: Dish["ingredients"]) => void; // Update dish quantity by name
 };
 
 const DishesContext = createContext<DishesContextType | undefined>(undefined);
@@ -37,11 +37,11 @@ export const DishesProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setDishesStack((prev) => prev.filter((dish) => dish.name !== name));
   };
 
-  // Update the quantity of a dish by name
-  const updateDish = (name: string, quantity: number) => {
+  // Update the quantity and ingredients of a dish by name
+  const updateDish = (name: string, quantity: number, ingredients: Dish['ingredients']) => {
     setDishesStack((prev) =>
       prev.map((dish) =>
-        dish.name === name ? { ...dish, quantity } : dish
+        dish.name === name ? { ...dish, quantity, ingredients } : dish
       )
     );
   };
