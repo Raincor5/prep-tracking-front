@@ -4,8 +4,11 @@ import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
-
+import { StyleSheet } from 'react-native';
+import { RecipeProvider } from '@/context/RecipeContext';
+import { DishesProvider } from '@/context/DishesContext';
 import { useColorScheme } from '@/components/useColorScheme';
 
 export {
@@ -42,7 +45,15 @@ export default function RootLayout() {
     return null;
   }
 
-  return <RootLayoutNav />;
+  return (
+    <GestureHandlerRootView style={styles.gestureHandlerRoot}>
+      <DishesProvider>
+        <RecipeProvider>
+          <RootLayoutNav />
+        </RecipeProvider>
+      </DishesProvider>
+    </GestureHandlerRootView>
+  );
 }
 
 function RootLayoutNav() {
@@ -53,7 +64,17 @@ function RootLayoutNav() {
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+        <Stack.Screen
+          name="recipe-detail"
+          options={{ title: 'Recipe Details', presentation: "modal", headerShown: false }}
+        />
       </Stack>
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  gestureHandlerRoot: {
+    flex: 1,
+  },
+});
