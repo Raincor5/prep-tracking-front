@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';
+// TabTwoScreen.tsx
+import React, { useState, useRef, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -14,7 +15,9 @@ import {
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import BottomSheet, { BottomSheetView } from '@gorhom/bottom-sheet';
-import { useDishesContext, Dish } from '@/context/DishesContext';
+import { useRouter } from 'expo-router'; // Import useRouter for navigation
+import { useDishesContext } from '@/context/DishesContext';
+import { Dish } from '@/types/dish';
 
 /**
  * Compute the Levenshtein distance between two strings.
@@ -91,6 +94,7 @@ const CheckBox = ({
 export default function TabTwoScreen() {
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const { dishesStack, removeDish, updateDish } = useDishesContext();
+  const router = useRouter(); // Initialize router for navigation
 
   // State for CRUD bottom-sheet (editing a single dish)
   const [editingDish, setEditingDish] = useState<{ name: string; quantity: number } | null>(null);
@@ -137,16 +141,25 @@ export default function TabTwoScreen() {
   /**
    * Create a list of unique ingredients across all dishes.
    */
-  const uniqueIngredients = Array.from(
-    dishesStack.reduce((acc, dish) => {
-      dish.ingredients.forEach((ingredient) => {
-        if (!acc.has(ingredient.name)) {
-          acc.set(ingredient.name, ingredient.unit || '');
-        }
-      });
-      return acc;
-    }, new Map<string, string>())
-  ).map(([name, unit]) => ({ name, unit }));
+  const uniqueIngredients = useMemo(() => {
+    return Array.from(
+      dishesStack.reduce((acc, dish) => {
+        dish.ingredients.forEach((ingredient) => {
+          if (!acc.has(ingredient.name)) {
+            acc.set(ingredient.name, ingredient.unit || '');
+          }
+        });
+        return acc;
+      }, new Map<string, string>())
+    ).map(([name, unit]) => ({ name, unit }));
+  }, [dishesStack]);
+
+  /**
+   * Compile all prep bags from all dishes into a single list.
+   */
+  const allPrepBags = useMemo(() => {
+    return dishesStack.flatMap(dish => dish.prepBags || []);
+  }, [dishesStack]);
 
   // Render each dish in the prep list.
   // (A tap opens the CRUD bottom-sheet to edit/remove that dish.)
@@ -301,7 +314,12 @@ export default function TabTwoScreen() {
         const updatedIngredients = dish.ingredients.filter(
           (ingredient) => !tickedIngredients.includes(ingredient.name)
         );
-        updateDish(dish.name, dish.quantity, updatedIngredients); // Ensure updateDish can handle updated ingredients
+        if (updatedIngredients.length === 0) {
+          // Remove the dish if no ingredients remain
+          removeDish(dish.name);
+        } else {
+          updateDish(dish.name, dish.quantity, updatedIngredients);
+        }
       });
 
       // Reset the tickedIngredients state
@@ -321,7 +339,11 @@ export default function TabTwoScreen() {
             const updatedIngredients = dish.ingredients.filter(
               (ingredient) => !ingredients.includes(ingredient.name)
             );
-            updateDish(dish.name, dish.quantity, updatedIngredients); // Ensure updateDish can handle updated ingredients
+            if (updatedIngredients.length === 0) {
+              removeDish(dish.name);
+            } else {
+              updateDish(dish.name, dish.quantity, updatedIngredients);
+            }
           }
         }
       });
@@ -391,6 +413,27 @@ export default function TabTwoScreen() {
         </View>
         {/* -------------------------------
             End Ingredient Tick-Off Section
+           ------------------------------- */}
+
+        {/* -------------------------------
+            Advanced Mode Section (New)
+           ------------------------------- */}
+        <View style={styles.advancedModeSection}>
+          <Pressable
+            style={styles.advancedModeButton}
+            onPress={() => {
+              // 1) Log the current dishes stack
+              console.warn("Dishes stack before navigating:", JSON.stringify(dishesStack, null, 2));
+    
+              // 2) Then navigate to advanced mode
+              router.push("/advanced-mode");
+            }}
+          >
+            <Text style={styles.advancedModeButtonText}>Advanced View</Text>
+          </Pressable>
+        </View>
+        {/* -------------------------------
+            End Advanced Mode Section
            ------------------------------- */}
       </ScrollView>
 
@@ -665,6 +708,30 @@ const styles = StyleSheet.create({
   tickOffConfirmButtonText: {
     color: '#fff',
     fontWeight: 'bold',
+  },
+  // Advanced Mode Section Styles
+  advancedModeSection: {
+    marginTop: 30,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+  },
+  advancedModeButton: {
+    backgroundColor: '#FF5722',
+    paddingVertical: 12,
+    paddingHorizontal: 25,
+    borderRadius: 5,
+  },
+  advancedModeButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  // Common Styles
+  noPrepBagsText: {
+    color: '#fff',
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 10,
   },
   // Bottom-Sheet / CRUD styles
   bottomSheetBackground: {

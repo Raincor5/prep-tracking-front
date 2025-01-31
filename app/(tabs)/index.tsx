@@ -1,3 +1,5 @@
+// app/(tabs)/index.tsx
+
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
@@ -125,6 +127,8 @@ export default function RecipePreview() {
       name: selectedRecipe.name,
       ingredients: selectedRecipe.ingredients || [],
       quantity: q,
+      prepBags: [],
+      colour: selectedRecipe.colour,
     };
     addDish(newDish, q);
 

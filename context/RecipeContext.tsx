@@ -1,13 +1,8 @@
+// context/RecipeContext.tsx
+
 import React, { createContext, useContext, useEffect, useState } from "react";
 import apiEndpoints from "@/constants/apiConfig";
-
-export type Recipe = {
-  _id: string;
-  name: string;
-  originalPortion: number;
-  ingredients: Array<{ name: string; weight: number; unit: string }>;
-  steps: string[];
-};
+import { Recipe } from "@/types/recipe";
 
 type RecipeContextType = {
   recipes: Recipe[];
@@ -30,6 +25,7 @@ export const RecipeProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       const data = await response.json();
       setRecipes(data);
+      console.warn("Fetched recipes:", JSON.stringify(data, null, 2));
     } catch (error) {
       console.error("Error fetching recipes:", error);
     }

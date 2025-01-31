@@ -11,6 +11,7 @@ import { RecipeProvider } from '@/context/RecipeContext';
 import { DishesProvider } from '@/context/DishesContext';
 import { useColorScheme } from '@/components/useColorScheme';
 
+
 export {
   // Catch any errors thrown by the Layout component.
   ErrorBoundary,
@@ -67,6 +68,14 @@ function RootLayoutNav() {
         <Stack.Screen
           name="recipe-detail"
           options={{ title: 'Recipe Details', presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="advanced-mode/index"
+          options={{
+            headerShown: false, // Hide header for full-screen view
+            gestureEnabled: true,
+            presentation: 'modal', // Present as modal
+          }}
         />
       </Stack>
     </ThemeProvider>

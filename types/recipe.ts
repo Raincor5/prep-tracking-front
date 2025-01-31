@@ -6,11 +6,11 @@ export interface Ingredient {
     unit: string;
   }
   
-  export interface Recipe {
-    _id: string;
-    name: string;
-    originalPortion: number;
-    ingredients: Ingredient[];
-    steps: string[];
-  }
-  
+export type Recipe = {
+  _id: string;
+  name: string;
+  originalPortion: number;
+  ingredients: Array<{ name: string; weight: number; unit: string }>;
+  steps: string[];
+  colour? : string;
+};
