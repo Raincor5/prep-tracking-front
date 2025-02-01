@@ -1,3 +1,5 @@
+// app/(tabs)/upload.tsx
+
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Alert, Image } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
