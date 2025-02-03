@@ -10,7 +10,7 @@ import { StyleSheet } from 'react-native';
 import { RecipeProvider } from '@/context/RecipeContext';
 import { DishesProvider } from '@/context/DishesContext';
 import { useColorScheme } from '@/components/useColorScheme';
-
+import { IngredientsProvider } from '@/context/IngredientsContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -48,11 +48,13 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.gestureHandlerRoot}>
-      <DishesProvider>
-        <RecipeProvider>
-          <RootLayoutNav />
-        </RecipeProvider>
-      </DishesProvider>
+      <RecipeProvider>
+        <DishesProvider>
+          <IngredientsProvider>
+            <RootLayoutNav />
+          </IngredientsProvider>
+        </DishesProvider>
+      </RecipeProvider>
     </GestureHandlerRootView>
   );
 }

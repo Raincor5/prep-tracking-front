@@ -1,4 +1,6 @@
 // context/RecipeContext.tsx
+// A context to manage the state of recipes in the app.
+// Purpose: This context provides functions to fetch recipes from the server and store them in the app. It allows users to access the recipes from the global context.
 
 import React, { createContext, useContext, useEffect, useState } from "react";
 import apiEndpoints from "@/constants/apiConfig";
@@ -12,9 +14,7 @@ type RecipeContextType = {
 
 const RecipeContext = createContext<RecipeContextType | undefined>(undefined);
 
-export const RecipeProvider: React.FC<{ children: React.ReactNode }> = ({
-  children,
-}) => {
+export const RecipeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
 
   const fetchRecipes = async () => {
