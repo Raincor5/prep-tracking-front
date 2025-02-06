@@ -11,6 +11,7 @@ import { RecipeProvider } from '@/context/RecipeContext';
 import { DishesProvider } from '@/context/DishesContext';
 import { useColorScheme } from '@/components/useColorScheme';
 import { IngredientsProvider } from '@/context/IngredientsContext';
+import { GestureManagerProvider } from '@/context/GestureManagerContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -48,13 +49,15 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.gestureHandlerRoot}>
-      <RecipeProvider>
-        <DishesProvider>
-          <IngredientsProvider>
-            <RootLayoutNav />
-          </IngredientsProvider>
-        </DishesProvider>
-      </RecipeProvider>
+      <GestureManagerProvider>
+        <RecipeProvider>
+          <DishesProvider>
+            <IngredientsProvider>
+              <RootLayoutNav />
+            </IngredientsProvider>
+          </DishesProvider>
+        </RecipeProvider>
+      </GestureManagerProvider>
     </GestureHandlerRootView>
   );
 }

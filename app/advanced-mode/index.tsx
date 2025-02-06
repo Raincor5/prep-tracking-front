@@ -1,7 +1,6 @@
-// app/advanced-mode/index.tsx
-// A screen for the advanced mode of the app.
-// Purpose: This screen allows users to view and interact with dishes in a draggable list. Users can select ingredients to view and confirm updates to prep bags.
-
+// app/advanced-mode/AdvancedMode.tsx
+// A screen that displays draggable dishes with prep bags.
+// Purpose: This screen allows users to drag dishes with prep bags and select ingredients to confirm.
 import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import {
   View,
@@ -17,14 +16,14 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import DraggableFlatList, { RenderItemParams } from "react-native-draggable-flatlist";
-import { ViewToken } from "react-native";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { useDishesContext } from "@/context/DishesContext";
 import DraggableDish from "@/app/advanced-mode/DraggableDish";
+import { useDishesContext } from "@/context/DishesContext";
 import { useIngredientsContext } from "@/context/IngredientsContext";
-import { IngredientChip } from "./IngredientChip"; // adjust the path if needed
+import { IngredientChip } from "./IngredientChip"; // Adjust the path if needed
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { useGestureManager, GestureManagerProvider } from "@/context/GestureManagerContext";
 
-// Utility: Create a matrix of prep bags (columns of 8) from an array.
+// Utility: Create a matrix from an array of prepBags.
 const createMatrix = (prepBags: any[], columnHeight = 8) => {
   const totalCols = Math.ceil(prepBags.length / columnHeight);
   return Array.from({ length: columnHeight }, (_, row) =>
@@ -40,49 +39,64 @@ export default function AdvancedMode() {
   const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
   const [frozenIngredientOrder, setFrozenIngredientOrder] = useState<string[] | null>(null);
   const [showMissing, setShowMissing] = useState(false);
-
   const ingredientScrollRef = useRef<ScrollView>(null);
+  // Create a ref for the flat list to allow simultaneous gesture handling.
+  const flatListRef = useRef(null);
 
-  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-    const indices = viewableItems.map(item => item.index).filter((i): i is number => i !== null && i !== undefined);
+  // Use the gesture manager from context.
+  const { isSwipeEnabled, setGestureState } = useGestureManager();
+
+  // When selectedIngredients change, update the gesture manager state.
+  useEffect(() => {
+    setGestureState(selectedIngredients);
+  }, [selectedIngredients, setGestureState]);
+
+  const onBagPress = useCallback(
+    (dishId: string, bagId: string) => {
+      const dish = dishesStack.find((d) => d.id === dishId);
+      if (!dish) return;
+      const bag = dish.prepBags.find((b) => b && b.id === bagId);
+      if (!bag) return;
+      const allowed = new Set(dish.ingredients.map((ing) => ing.name));
+      selectedIngredients.forEach((ing) => {
+        if (!allowed.has(ing)) return;
+        const confirmed = bag.addedIngredients.some((ai) => ai.name === ing);
+        updatePending(bagId, ing, !confirmed);
+      });
+    },
+    [dishesStack, selectedIngredients, updatePending]
+  );
+
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: any[] }) => {
+    const indices = viewableItems
+      .map((item) => item.index)
+      .filter((i): i is number => i !== null && i !== undefined);
     setFocusedIndices(indices);
   }).current;
 
   const viewabilityConfig = useMemo(() => ({ viewAreaCoveragePercentThreshold: 50 }), []);
 
-  const focusedDishes = useMemo(() => focusedIndices.map(i => dishesStack[i]).filter(Boolean), [focusedIndices, dishesStack]);
+  const focusedDishes = useMemo(
+    () => focusedIndices.map((i) => dishesStack[i]).filter(Boolean),
+    [focusedIndices, dishesStack]
+  );
 
   const frequencyMap = useMemo(() => {
     const map: Record<string, number> = {};
-    dishesStack.forEach(dish => {
-      dish.ingredients.forEach(ingredient => {
+    dishesStack.forEach((dish) => {
+      dish.ingredients.forEach((ingredient) => {
         map[ingredient.name] = (map[ingredient.name] || 0) + 1;
       });
     });
     return map;
   }, [dishesStack]);
 
-  // Helper: determine if an ingredient is exhausted across all dishes.
-  const isIngredientExhausted = useCallback((ingredientName: string): boolean => {
-    let totalRequired = 0;
-    let totalConfirmed = 0;
-    dishesStack.forEach(dish => {
-      if (dish.ingredients.some(ing => ing.name === ingredientName)) {
-        totalRequired += dish.prepBags.length;
-        dish.prepBags.forEach(bag => {
-          if (bag.addedIngredients.some(ai => ai.name === ingredientName)) {
-            totalConfirmed++;
-          }
-        });
-      }
-    });
-    return totalRequired > 0 && totalConfirmed >= totalRequired;
-  }, [dishesStack]);
-
   useEffect(() => {
     if (selectedIngredients.length > 0 && !frozenIngredientOrder) {
       const focusedSet = new Set<string>();
-      focusedDishes.forEach(dish => dish.ingredients.forEach(ingredient => focusedSet.add(ingredient.name)));
+      focusedDishes.forEach((dish) =>
+        dish.ingredients.forEach((ingredient) => focusedSet.add(ingredient.name))
+      );
       const sorted = Object.keys(frequencyMap).sort((a, b) => {
         const aFocused = focusedSet.has(a) ? 1 : 0;
         const bFocused = focusedSet.has(b) ? 1 : 0;
@@ -98,9 +112,11 @@ export default function AdvancedMode() {
 
   const allIngredients = useMemo(() => {
     if (frozenIngredientOrder) return frozenIngredientOrder;
+    const focusedSet = new Set<string>();
+    focusedDishes.forEach((dish) =>
+      dish.ingredients.forEach((ingredient) => focusedSet.add(ingredient.name))
+    );
     const sorted = Object.keys(frequencyMap).sort((a, b) => {
-      const focusedSet = new Set<string>();
-      focusedDishes.forEach(dish => dish.ingredients.forEach(ingredient => focusedSet.add(ingredient.name)));
       const aFocused = focusedSet.has(a) ? 1 : 0;
       const bFocused = focusedSet.has(b) ? 1 : 0;
       if (aFocused !== bFocused) return bFocused - aFocused;
@@ -114,44 +130,31 @@ export default function AdvancedMode() {
   }, [allIngredients]);
 
   const toggleIngredient = useCallback((name: string) => {
-    setSelectedIngredients(prev =>
-      prev.includes(name) ? prev.filter(ing => ing !== name) : [...prev, name]
+    setSelectedIngredients((prev) =>
+      prev.includes(name) ? prev.filter((ing) => ing !== name) : [...prev, name]
     );
   }, []);
 
+  // Disable dish dragging when ingredients are selected (to allow swipe gesture on bag cells).
   const disableDrag = selectedIngredients.length > 0;
 
-  // When a prep bag cell is pressed, update pending updates via IngredientsContext.
-  const onBagPress = useCallback(
-    (dishId: string, bagId: string) => {
-      const dish = dishesStack.find(d => d.id === dishId);
-      if (!dish) return;
-      const bag = dish.prepBags.find(b => b && b.id === bagId);
-      if (!bag) return;
-      const allowed = new Set(dish.ingredients.map(ing => ing.name));
-      selectedIngredients.forEach(ing => {
-        if (!allowed.has(ing)) return;
-        const confirmed = bag.addedIngredients.some(ai => ai.name === ing);
-        updatePending(bagId, ing, !confirmed);
-      });
-    },
-    [dishesStack, selectedIngredients, updatePending]
-  );
-
-  // Confirm updates for all bags that have pending changes.
   const confirmAllUpdates = useCallback(() => {
-    dishesStack.forEach(dish => {
-      dish.prepBags.forEach(bag => {
+    dishesStack.forEach((dish) => {
+      dish.prepBags.forEach((bag) => {
         if (!bag) return;
         const effectiveCount = getEffectiveCount(
           bag.id,
-          bag.addedIngredients.map(ai => ai.name),
+          bag.addedIngredients.map((ai) => ai.name),
           bag.ingredients.length,
           showMissing
         );
         if (effectiveCount !== bag.addedIngredients.length) {
-          // Merge pending updates with confirmed ingredients.
-          confirmUpdates(bag.id, bag.addedIngredients.map(ai => ai.name), bag.ingredients, updatePrepBag);
+          confirmUpdates(
+            bag.id,
+            bag.addedIngredients.map((ai) => ai.name),
+            bag.ingredients,
+            updatePrepBag
+          );
         }
       });
     });
@@ -160,7 +163,6 @@ export default function AdvancedMode() {
 
   const renderItem = useCallback(
     ({ item, drag, isActive }: RenderItemParams<typeof dishesStack[0]>) => {
-      // Derive the matrix at render time from the current prepBags.
       const matrix = createMatrix(item.prepBags, 8);
       return (
         <TouchableOpacity
@@ -169,41 +171,45 @@ export default function AdvancedMode() {
           style={[styles.dishItem, { opacity: isActive ? 0.8 : 1 }]}
         >
           <DraggableDish
+            dishId={item.id}
             label={item.name}
-            matrix={matrix}  // Pass the computed matrix
+            matrix={matrix}
             colour={item.colour}
             editable={disableDrag}
             onBagPress={(bagId: string) => onBagPress(item.id, bagId)}
-            selectedIngredients={selectedIngredients} // Pass selected ingredients to highlight cells
+            selectedIngredients={selectedIngredients}
+            isSwipeEnabled={isSwipeEnabled}
           />
         </TouchableOpacity>
       );
     },
-    [disableDrag, onBagPress, dishesStack, selectedIngredients]
+    [disableDrag, onBagPress, dishesStack, selectedIngredients, isSwipeEnabled]
   );
 
   return (
+    // Wrap the screen in GestureHandlerRootView and GestureManagerProvider.
     <GestureHandlerRootView style={styles.root}>
-      <SafeAreaProvider>
-        <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
-          <View style={styles.container}>
+      <View style={styles.container}>
+        <SafeAreaProvider>
+          <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]} edges={["left", "right", "bottom"]}>
             <ScrollView
               ref={ingredientScrollRef}
               horizontal
               contentContainerStyle={styles.ingredientBarContent}
               style={styles.ingredientBar}
               showsHorizontalScrollIndicator={false}
+              scrollEnabled={true} // Always allow scrolling of the ingredients bar.
             >
               {allIngredients.length === 0 ? (
                 <Text style={styles.emptyIngredientsText}>No ingredients</Text>
               ) : (
-                allIngredients.map(name => (
+                allIngredients.map((name) => (
                   <IngredientChip
                     key={name}
                     name={name}
                     selected={selectedIngredients.includes(name)}
                     onToggle={() => toggleIngredient(name)}
-                    exhausted={isIngredientExhausted(name)}  // Highlight if exhausted
+                    exhausted={false}
                   />
                 ))
               )}
@@ -215,8 +221,9 @@ export default function AdvancedMode() {
             )}
             <View style={[styles.listContainer, { height: Dimensions.get("window").height * 0.7 }]}>
               <DraggableFlatList
+                ref={flatListRef}
                 data={dishesStack}
-                keyExtractor={dish => dish.id}
+                keyExtractor={(dish) => dish.id}
                 renderItem={renderItem}
                 onDragEnd={({ data }) => reorderDishes(data)}
                 onViewableItemsChanged={onViewableItemsChanged}
@@ -225,11 +232,12 @@ export default function AdvancedMode() {
                 initialNumToRender={3}
                 windowSize={5}
                 contentContainerStyle={styles.listContent}
+                scrollEnabled={!disableDrag} // Allow scrolling when ingredients are not selected.
               />
             </View>
-          </View>
-        </SafeAreaView>
-      </SafeAreaProvider>
+          </SafeAreaView>
+        </SafeAreaProvider>
+      </View>
     </GestureHandlerRootView>
   );
 }
@@ -240,12 +248,17 @@ const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 10 },
   ingredientBar: { marginBottom: 2 },
   ingredientBarContent: { alignItems: "center", paddingHorizontal: 5 },
-  ingredientChip: { backgroundColor: "#333", borderRadius: 16, paddingVertical: 4, paddingHorizontal: 10, marginRight: 5 },
-  ingredientChipText: { color: "#fff", fontSize: 14 },
   emptyIngredientsText: { color: "#fff", marginLeft: 10 },
   listContainer: { height: Dimensions.get("window").height * 0.7 },
   listContent: { paddingVertical: 0 },
   dishItem: { marginRight: 5 },
-  confirmButton: { backgroundColor: "#4CAF50", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, alignSelf: "center", marginBottom: 5 },
+  confirmButton: {
+    backgroundColor: "#4CAF50",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignSelf: "center",
+    marginBottom: 5,
+  },
   confirmButtonText: { color: "#fff", fontWeight: "bold" },
 });

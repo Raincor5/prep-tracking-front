@@ -120,11 +120,12 @@ export default function TabTwoScreen() {
   /**
    * Compute aggregated ingredients across all dishes.
    * (This aggregated list is still rendered in the summary block.)
-   */
-  const aggregatedIngredients = dishesStack.reduce(
+    */
+  const aggregatedIngredientsTotal = dishesStack.reduce(
     (acc, dish) => {
+      const totalCount = dish.quantity; // Original count, regardless of completion
       dish.ingredients.forEach((ingredient) => {
-        const totalWeight = ingredient.weight * dish.quantity;
+        const totalWeight = ingredient.weight * totalCount;
         const similarKey = findSimilarIngredientKey(acc, ingredient.name, 0.8);
         if (similarKey) {
           acc[similarKey].totalWeight += totalWeight;
@@ -136,7 +137,27 @@ export default function TabTwoScreen() {
     },
     {} as Record<string, { totalWeight: number; unit: string }>
   );
-  const aggregatedIngredientsArray = Object.entries(aggregatedIngredients);
+  
+  // Remaining ingredients (based on incomplete prep bags)
+  const aggregatedIngredientsRemaining = dishesStack.reduce(
+    (acc, dish) => {
+      const remainingCount = dish.prepBags.filter(bag => !bag.isComplete).length;
+      dish.ingredients.forEach((ingredient) => {
+        const totalWeight = ingredient.weight * remainingCount;
+        const similarKey = findSimilarIngredientKey(acc, ingredient.name, 0.8);
+        if (similarKey) {
+          acc[similarKey].totalWeight += totalWeight;
+        } else {
+          acc[ingredient.name] = { totalWeight, unit: ingredient.unit || '' };
+        }
+      });
+      return acc;
+    },
+    {} as Record<string, { totalWeight: number; unit: string }>
+  );
+  
+  const aggregatedIngredientsTotalArray = Object.entries(aggregatedIngredientsTotal);
+  const aggregatedIngredientsRemainingArray = Object.entries(aggregatedIngredientsRemaining);
 
   /**
    * Create a list of unique ingredients across all dishes.
@@ -166,7 +187,7 @@ export default function TabTwoScreen() {
   const renderDish = ({ item }: { item: Dish }) => (
     <TouchableOpacity style={styles.dishItem} onPress={() => openCrudSheet(item)}>
       <Text style={styles.dishName}>
-        {item.name} (x{item.quantity})
+        {item.name} (x{item.prepBags.length})
       </Text>
     </TouchableOpacity>
   );
@@ -380,10 +401,19 @@ export default function TabTwoScreen() {
               scrollEnabled={false}
             />
 
-            {/* Aggregated Ingredients Section */}
+            {/* Section for the Original Total Ingredients */}
             <Text style={styles.sectionTitle}>Total Ingredients Required</Text>
             <FlatList
-              data={aggregatedIngredientsArray}
+              data={aggregatedIngredientsTotalArray}
+              keyExtractor={([name]) => name}
+              renderItem={renderIngredient}  // you can use your existing renderIngredient
+              scrollEnabled={false}
+            />
+
+            {/* Section for the Remaining Ingredients */}
+            <Text style={styles.sectionTitle}>Ingredients Remaining to Add</Text>
+            <FlatList
+              data={aggregatedIngredientsRemainingArray}
               keyExtractor={([name]) => name}
               renderItem={renderIngredient}
               scrollEnabled={false}
@@ -661,6 +691,8 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     marginHorizontal: 10,
     flex: 1,
+    justifyContent: 'center', // Aligns children vertically in the center
+    alignItems: 'center',     // horizontally centers children
   },
   tickOffOptionText: {
     color: '#fff',
