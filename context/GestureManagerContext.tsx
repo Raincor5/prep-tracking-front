@@ -1,35 +1,41 @@
-// app/context/GestureManagerContext.tsx
-// A context to manage the state of gestures in the app.
-// Purpose: This context provides functions to enable or disable swipe and scroll gestures in the app.
-
-import React, { createContext, useState, useEffect, useContext } from "react";
+// src/context/GestureManagerContext.tsx
+// A context to manage the state and priority of gestures in the app.
+// Purpose: This context provides functions to enable/disable swipe-to–add and scrolling.
+// Features:
+//   - isSwipeEnabled: enables swipe-to–add ingredients when ingredients are selected.
+//   - isScrollEnabled: enables list scrolling when no ingredients are selected.
+//   - gesturePriority: a simple string ("swipe" or "scroll") indicating which gesture should take precedence.
+//   - setGestureState: updates the gesture states based on the selected ingredients.
+import React, { createContext, useState, useContext } from "react";
 
 type GestureManagerContextType = {
   isSwipeEnabled: boolean;
   isScrollEnabled: boolean;
+  gesturePriority: "swipe" | "scroll";
   setGestureState: (selectedIngredients: string[]) => void;
 };
 
 const GestureManagerContext = createContext<GestureManagerContextType | undefined>(undefined);
 
-export const GestureManagerProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
+export const GestureManagerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isSwipeEnabled, setSwipeEnabled] = useState(false);
   const [isScrollEnabled, setScrollEnabled] = useState(true);
+  const [gesturePriority, setGesturePriority] = useState<"swipe" | "scroll">("scroll");
 
-  // When ingredients are selected, enable swipe (for adding ingredients) and disable scroll.
-  // Otherwise, disable swipe and enable scroll.
   const setGestureState = (selectedIngredients: string[]) => {
     if (selectedIngredients.length > 0) {
       setSwipeEnabled(true);
       setScrollEnabled(false);
+      setGesturePriority("swipe");
     } else {
       setSwipeEnabled(false);
       setScrollEnabled(true);
+      setGesturePriority("scroll");
     }
   };
 
   return (
-    <GestureManagerContext.Provider value={{ isSwipeEnabled, isScrollEnabled, setGestureState }}>
+    <GestureManagerContext.Provider value={{ isSwipeEnabled, isScrollEnabled, gesturePriority, setGestureState }}>
       {children}
     </GestureManagerContext.Provider>
   );

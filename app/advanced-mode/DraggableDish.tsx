@@ -1,13 +1,16 @@
 // app/advanced-mode/DraggableDish.tsx
 // A component that displays a draggable dish with prep bags.
 // Purpose: This component displays a draggable dish with prep bags that can be swiped over to add ingredients.
-// The swipe handler works only when the gesture manager indicates that swipe is enabled.
+// The swipe handler is enabled only when the gesture manager indicates that swipe is enabled.
+// Additionally, when a bag is swiped over, a small scale animation is triggered to visually indicate the action,
+// and if a bag is complete (i.e. full) or the ingredient is exhausted, a red border is applied.
 import React, { memo, useRef, useEffect, useCallback } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
+  Animated,
   findNodeHandle,
 } from "react-native";
 import { PanGestureHandler, State as GestureState } from "react-native-gesture-handler";
@@ -63,26 +66,41 @@ const DraggableDish: React.FC<DraggableDishProps> = memo(
 
     // Local state for measuring bag cell absolute layouts.
     const [bagLayouts, setBagLayouts] = React.useState<Record<string, { x: number; y: number; width: number; height: number }>>({});
+    // Local ref to track which bag cells have been triggered during a gesture.
     const activatedBagsRef = useRef<Set<string>>(new Set());
+    // Ref to hold animation values for each cell.
+    const cellAnimations = useRef<Record<string, Animated.Value>>({});
 
-    const updateCellLayout = useCallback((bagId: string, layout: { x: number; y: number; width: number; height: number }) => {
-      setBagLayouts((prev) => ({ ...prev, [bagId]: layout }));
-    }, []);
+    const updateCellLayout = useCallback(
+      (bagId: string, layout: { x: number; y: number; width: number; height: number }) => {
+        setBagLayouts((prev) => ({ ...prev, [bagId]: layout }));
+      },
+      []
+    );
 
-    // Only run the swipe logic if swipe is enabled (controlled by the gesture manager).
+    // Translation threshold to avoid accidental triggers.
+    const translationThreshold = 5;
+
+    // The pan gesture callback for the dish.
     const onGestureEvent = useCallback(
       (event: any) => {
         if (!isSwipeEnabled || selectedIngredients.length === 0) return;
         const { absoluteX, absoluteY, translationX, translationY } = event.nativeEvent;
-        // Small threshold to avoid accidental triggers.
-        const threshold = 5;
-        if (Math.abs(translationX) < threshold && Math.abs(translationY) < threshold) return;
+        if (Math.abs(translationX) < translationThreshold && Math.abs(translationY) < translationThreshold)
+          return;
         Object.entries(bagLayouts).forEach(([bagId, layout]) => {
           const withinX = absoluteX >= layout.x && absoluteX <= layout.x + layout.width;
           const withinY = absoluteY >= layout.y && absoluteY <= layout.y + layout.height;
           if (withinX && withinY && !activatedBagsRef.current.has(bagId)) {
             console.log("Swiped over bag:", bagId);
             activatedBagsRef.current.add(bagId);
+            // Trigger cell animation.
+            if (cellAnimations.current[bagId]) {
+              Animated.sequence([
+                Animated.timing(cellAnimations.current[bagId], { toValue: 1.1, duration: 100, useNativeDriver: true }),
+                Animated.timing(cellAnimations.current[bagId], { toValue: 1, duration: 100, useNativeDriver: true }),
+              ]).start();
+            }
             if (onBagPress) onBagPress(bagId);
           }
         });
@@ -104,6 +122,7 @@ const DraggableDish: React.FC<DraggableDishProps> = memo(
       <PanGestureHandler
         onGestureEvent={onGestureEvent}
         onHandlerStateChange={onHandlerStateChange}
+        enabled={isSwipeEnabled}
       >
         <View style={[styles.matrixWrapper, { width: dynamicWidth, height: dynamicHeight }]}>
           <Text style={styles.dishTitle} numberOfLines={1}>
@@ -131,6 +150,9 @@ const DraggableDish: React.FC<DraggableDishProps> = memo(
                   const total = cell.ingredients.length;
                   const cellContent = `${effectiveCount}/${total}`;
 
+                  // Determine if the bag is complete.
+                  const isComplete = cell.isComplete;
+                  // If a bag is "exhausted" (or full), mark it with a red border.
                   const isCellExhausted = selectedIngredients.some((sel) =>
                     cell.addedIngredients.some((ai) => ai.name === sel)
                   );
@@ -140,9 +162,14 @@ const DraggableDish: React.FC<DraggableDishProps> = memo(
                     { ...baseCellStyle, backgroundColor: dishColor },
                     isCellExhausted ? { ...baseCellStyle, borderColor: "red", borderWidth: 2 } : {},
                   ];
-                  if (cell.isComplete) {
-                    cellStyle.push({ ...baseCellStyle, backgroundColor: "green" });
+                  if (isComplete) {
+                    cellStyle.push({ ...baseCellStyle, backgroundColor: "green", borderColor: "red", borderWidth: 2 });
                   }
+
+                  if (!cellAnimations.current[cell.id]) {
+                    cellAnimations.current[cell.id] = new Animated.Value(1);
+                  }
+                  const scale = cellAnimations.current[cell.id];
 
                   const cellRef = useRef<View>(null);
                   useEffect(() => {
@@ -154,9 +181,9 @@ const DraggableDish: React.FC<DraggableDishProps> = memo(
                   }, [cellRef.current]);
 
                   const cellView = (
-                    <View ref={cellRef} style={cellStyle}>
+                    <Animated.View ref={cellRef} style={[cellStyle, { transform: [{ scale }] }]}>
                       <Text style={styles.cellText}>{cellContent}</Text>
-                    </View>
+                    </Animated.View>
                   );
 
                   return editable && onBagPress ? (

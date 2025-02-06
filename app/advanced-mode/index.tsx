@@ -21,7 +21,7 @@ import { useDishesContext } from "@/context/DishesContext";
 import { useIngredientsContext } from "@/context/IngredientsContext";
 import { IngredientChip } from "./IngredientChip"; // Adjust the path if needed
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { useGestureManager, GestureManagerProvider } from "@/context/GestureManagerContext";
+import { useGestureManager } from "@/context/GestureManagerContext";
 
 // Utility: Create a matrix from an array of prepBags.
 const createMatrix = (prepBags: any[], columnHeight = 8) => {
@@ -31,7 +31,24 @@ const createMatrix = (prepBags: any[], columnHeight = 8) => {
   );
 };
 
-export default function AdvancedMode() {
+// Helper function: Determine if an ingredient is exhausted across all dishes.
+const isIngredientExhausted = (ingredient: string, dishesStack: any[]): boolean => {
+  let required = 0;
+  let confirmed = 0;
+  dishesStack.forEach((dish) => {
+    if (dish.ingredients.some((ing: any) => ing.name === ingredient)) {
+      required += dish.prepBags.length;
+      dish.prepBags.forEach((bag: any) => {
+        if (bag && bag.addedIngredients.some((ai: any) => ai.name === ingredient)) {
+          confirmed++;
+        }
+      });
+    }
+  });
+  return required > 0 && confirmed >= required;
+};
+
+export default function AdvancedModeScreen() {
   const insets = useSafeAreaInsets();
   const { dishesStack, reorderDishes, updatePrepBag } = useDishesContext();
   const { updatePending, confirmUpdates, getEffectiveCount } = useIngredientsContext();
@@ -40,13 +57,14 @@ export default function AdvancedMode() {
   const [frozenIngredientOrder, setFrozenIngredientOrder] = useState<string[] | null>(null);
   const [showMissing, setShowMissing] = useState(false);
   const ingredientScrollRef = useRef<ScrollView>(null);
+
   // Create a ref for the flat list to allow simultaneous gesture handling.
   const flatListRef = useRef(null);
 
   // Use the gesture manager from context.
-  const { isSwipeEnabled, setGestureState } = useGestureManager();
+  const { isSwipeEnabled, isScrollEnabled, setGestureState } = useGestureManager();
 
-  // When selectedIngredients change, update the gesture manager state.
+  // Update gesture manager state when selected ingredients change.
   useEffect(() => {
     setGestureState(selectedIngredients);
   }, [selectedIngredients, setGestureState]);
@@ -55,12 +73,12 @@ export default function AdvancedMode() {
     (dishId: string, bagId: string) => {
       const dish = dishesStack.find((d) => d.id === dishId);
       if (!dish) return;
-      const bag = dish.prepBags.find((b) => b && b.id === bagId);
+      const bag = dish.prepBags.find((b: any) => b && b.id === bagId);
       if (!bag) return;
-      const allowed = new Set(dish.ingredients.map((ing) => ing.name));
+      const allowed = new Set(dish.ingredients.map((ing: any) => ing.name));
       selectedIngredients.forEach((ing) => {
         if (!allowed.has(ing)) return;
-        const confirmed = bag.addedIngredients.some((ai) => ai.name === ing);
+        const confirmed = bag.addedIngredients.some((ai: any) => ai.name === ing);
         updatePending(bagId, ing, !confirmed);
       });
     },
@@ -84,7 +102,7 @@ export default function AdvancedMode() {
   const frequencyMap = useMemo(() => {
     const map: Record<string, number> = {};
     dishesStack.forEach((dish) => {
-      dish.ingredients.forEach((ingredient) => {
+      dish.ingredients.forEach((ingredient: any) => {
         map[ingredient.name] = (map[ingredient.name] || 0) + 1;
       });
     });
@@ -95,7 +113,7 @@ export default function AdvancedMode() {
     if (selectedIngredients.length > 0 && !frozenIngredientOrder) {
       const focusedSet = new Set<string>();
       focusedDishes.forEach((dish) =>
-        dish.ingredients.forEach((ingredient) => focusedSet.add(ingredient.name))
+        dish.ingredients.forEach((ingredient: any) => focusedSet.add(ingredient.name))
       );
       const sorted = Object.keys(frequencyMap).sort((a, b) => {
         const aFocused = focusedSet.has(a) ? 1 : 0;
@@ -111,19 +129,16 @@ export default function AdvancedMode() {
   }, [selectedIngredients, frequencyMap, focusedDishes, frozenIngredientOrder]);
 
   const allIngredients = useMemo(() => {
-    if (frozenIngredientOrder) return frozenIngredientOrder;
-    const focusedSet = new Set<string>();
-    focusedDishes.forEach((dish) =>
-      dish.ingredients.forEach((ingredient) => focusedSet.add(ingredient.name))
-    );
-    const sorted = Object.keys(frequencyMap).sort((a, b) => {
-      const aFocused = focusedSet.has(a) ? 1 : 0;
-      const bFocused = focusedSet.has(b) ? 1 : 0;
-      if (aFocused !== bFocused) return bFocused - aFocused;
+    const ingredients = frozenIngredientOrder ? [...frozenIngredientOrder] : Object.keys(frequencyMap);
+    // Sort so that non-exhausted ingredients come first.
+    ingredients.sort((a, b) => {
+      const aEx = isIngredientExhausted(a, dishesStack) ? 1 : 0;
+      const bEx = isIngredientExhausted(b, dishesStack) ? 1 : 0;
+      if (aEx !== bEx) return aEx - bEx; // non-exhausted first
       return frequencyMap[b] - frequencyMap[a];
     });
-    return sorted;
-  }, [frequencyMap, focusedDishes, frozenIngredientOrder]);
+    return ingredients;
+  }, [frequencyMap, focusedDishes, frozenIngredientOrder, dishesStack]);
 
   useEffect(() => {
     ingredientScrollRef.current?.scrollTo({ x: 0, animated: true });
@@ -135,23 +150,23 @@ export default function AdvancedMode() {
     );
   }, []);
 
-  // Disable dish dragging when ingredients are selected (to allow swipe gesture on bag cells).
+  // Disable dish dragging when ingredients are selected so that swipe gesture on bag cells takes priority.
   const disableDrag = selectedIngredients.length > 0;
 
   const confirmAllUpdates = useCallback(() => {
     dishesStack.forEach((dish) => {
-      dish.prepBags.forEach((bag) => {
+      dish.prepBags.forEach((bag: any) => {
         if (!bag) return;
         const effectiveCount = getEffectiveCount(
           bag.id,
-          bag.addedIngredients.map((ai) => ai.name),
+          bag.addedIngredients.map((ai: any) => ai.name),
           bag.ingredients.length,
           showMissing
         );
         if (effectiveCount !== bag.addedIngredients.length) {
           confirmUpdates(
             bag.id,
-            bag.addedIngredients.map((ai) => ai.name),
+            bag.addedIngredients.map((ai: any) => ai.name),
             bag.ingredients,
             updatePrepBag
           );
@@ -187,7 +202,7 @@ export default function AdvancedMode() {
   );
 
   return (
-    // Wrap the screen in GestureHandlerRootView and GestureManagerProvider.
+    // Wrap the screen in GestureHandlerRootView; GestureManagerProvider should be set higher in the tree.
     <GestureHandlerRootView style={styles.root}>
       <View style={styles.container}>
         <SafeAreaProvider>
@@ -198,7 +213,7 @@ export default function AdvancedMode() {
               contentContainerStyle={styles.ingredientBarContent}
               style={styles.ingredientBar}
               showsHorizontalScrollIndicator={false}
-              scrollEnabled={true} // Always allow scrolling of the ingredients bar.
+              scrollEnabled={true}
             >
               {allIngredients.length === 0 ? (
                 <Text style={styles.emptyIngredientsText}>No ingredients</Text>
@@ -209,7 +224,7 @@ export default function AdvancedMode() {
                     name={name}
                     selected={selectedIngredients.includes(name)}
                     onToggle={() => toggleIngredient(name)}
-                    exhausted={false}
+                    exhausted={isIngredientExhausted(name, dishesStack)}
                   />
                 ))
               )}
@@ -232,7 +247,7 @@ export default function AdvancedMode() {
                 initialNumToRender={3}
                 windowSize={5}
                 contentContainerStyle={styles.listContent}
-                scrollEnabled={!disableDrag} // Allow scrolling when ingredients are not selected.
+                scrollEnabled={isScrollEnabled}
               />
             </View>
           </SafeAreaView>
@@ -241,6 +256,7 @@ export default function AdvancedMode() {
     </GestureHandlerRootView>
   );
 }
+
 
 const styles = StyleSheet.create({
   root: { flex: 1 },

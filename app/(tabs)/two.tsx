@@ -401,23 +401,23 @@ export default function TabTwoScreen() {
               scrollEnabled={false}
             />
 
-            {/* Section for the Original Total Ingredients */}
-            <Text style={styles.sectionTitle}>Total Ingredients Required</Text>
-            <FlatList
-              data={aggregatedIngredientsTotalArray}
-              keyExtractor={([name]) => name}
-              renderItem={renderIngredient}  // you can use your existing renderIngredient
-              scrollEnabled={false}
-            />
+          {/* Section for the Original Total Ingredients */}
+          <Text style={styles.sectionTitle}>Total Ingredients Required</Text>
+          <FlatList
+            data={aggregatedIngredientsTotalArray}
+            keyExtractor={([name]) => name}
+            renderItem={renderIngredient}  // you can use your existing renderIngredient
+            scrollEnabled={false}
+          />
 
-            {/* Section for the Remaining Ingredients */}
-            <Text style={styles.sectionTitle}>Ingredients Remaining to Add</Text>
-            <FlatList
-              data={aggregatedIngredientsRemainingArray}
-              keyExtractor={([name]) => name}
-              renderItem={renderIngredient}
-              scrollEnabled={false}
-            />
+          {/* Section for the Remaining Ingredients */}
+          <Text style={styles.sectionTitle}>Ingredients Remaining to Add</Text>
+          <FlatList
+            data={aggregatedIngredientsRemainingArray}
+            keyExtractor={([name]) => name}
+            renderItem={renderIngredient}
+            scrollEnabled={false}
+          />
           </>
         )}
 
