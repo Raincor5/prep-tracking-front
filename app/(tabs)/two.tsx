@@ -12,16 +12,16 @@ import {
   Alert,
   Keyboard,
   TouchableWithoutFeedback,
+  Dimensions,
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import BottomSheet, { BottomSheetView } from '@gorhom/bottom-sheet';
-import { useRouter } from 'expo-router'; // Import useRouter for navigation
+import { useRouter } from 'expo-router';
 import { useDishesContext } from '@/context/DishesContext';
 import { Dish } from '@/types/dish';
 
-/**
- * Compute the Levenshtein distance between two strings.
- */
+// --- Helper Functions ---
+// Compute the Levenshtein distance between two strings.
 function levenshteinDistance(a: string, b: string): number {
   const lenA = a.length;
   const lenB = b.length;
@@ -38,18 +38,16 @@ function levenshteinDistance(a: string, b: string): number {
     for (let j = 1; j <= lenB; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
       dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,        // Deletion
-        dp[i][j - 1] + 1,        // Insertion
-        dp[i - 1][j - 1] + cost  // Substitution
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
       );
     }
   }
   return dp[lenA][lenB];
 }
 
-/**
- * Convert Levenshtein distance to a similarity score (0 to 1).
- */
+// Convert Levenshtein distance to a similarity score (0 to 1).
 function similarity(str1: string, str2: string): number {
   if (!str1 && !str2) return 1;
   if (!str1 || !str2) return 0;
@@ -58,9 +56,7 @@ function similarity(str1: string, str2: string): number {
   return 1 - dist / maxLen;
 }
 
-/**
- * Try to find a key in acc that is similar enough to ingredientName.
- */
+// Find a key in the accumulator similar to the given ingredient name.
 function findSimilarIngredientKey(
   acc: Record<string, { totalWeight: number; unit: string }>,
   ingredientName: string,
@@ -74,94 +70,107 @@ function findSimilarIngredientKey(
   return null;
 }
 
-/**
- * A simple checkbox component.
- */
+// A simple checkbox component.
 const CheckBox = ({
   checked,
   onPress,
+  disabled,
 }: {
   checked: boolean;
   onPress: () => void;
+  disabled?: boolean;
 }) => (
-  <TouchableOpacity onPress={onPress} style={styles.checkboxContainer}>
+  <TouchableOpacity onPress={onPress} disabled={disabled} style={styles.checkboxContainer}>
     <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
       {checked && <Text style={styles.checkboxMark}>✔</Text>}
     </View>
   </TouchableOpacity>
 );
 
-export default function TabTwoScreen() {
-  const [summaryExpanded, setSummaryExpanded] = useState(false);
-  const { dishesStack, removeDish, updateDish } = useDishesContext();
-  const router = useRouter(); // Initialize router for navigation
+// --- Scaling Utilities ---
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+const guidelineBaseWidth = 350;
+const guidelineBaseHeight = 680;
+const scale = (size: number) => (SCREEN_WIDTH / guidelineBaseWidth) * size;
+const verticalScale = (size: number) => (SCREEN_HEIGHT / guidelineBaseHeight) * size;
+const moderateScale = (size: number, factor = 0.5) =>
+  size + (scale(size) - size) * factor;
 
-  // State for CRUD bottom-sheet (editing a single dish)
+// --- Aggregation Helpers ---
+// Compute aggregated remaining ingredients from incomplete prep bags.
+const aggregatedIngredientsRemaining = (dishesStack: Dish[]) => {
+  return dishesStack.reduce((acc, dish) => {
+    const remainingCount = dish.prepBags.filter(bag => !bag.isComplete).length;
+    dish.ingredients.forEach((ingredient) => {
+      const weightNeeded = ingredient.weight * remainingCount;
+      const similarKey = findSimilarIngredientKey(acc, ingredient.name, 0.8);
+      if (similarKey) {
+        acc[similarKey].totalWeight += weightNeeded;
+      } else {
+        acc[ingredient.name] = { totalWeight: weightNeeded, unit: ingredient.unit || '' };
+      }
+    });
+    return acc;
+  }, {} as Record<string, { totalWeight: number; unit: string }>);
+};
+
+// Helper: Determine if an ingredient is exhausted (i.e. added in every required prep bag).
+const isIngredientExhausted = (ingredient: string, dishesStack: Dish[]): boolean => {
+  let required = 0;
+  let confirmed = 0;
+  dishesStack.forEach((dish) => {
+    if (dish.ingredients.some((ing: any) => ing.name === ingredient)) {
+      required += dish.prepBags.length;
+      dish.prepBags.forEach((bag) => {
+        if (bag && bag.addedIngredients.some((ai) => ai.name === ingredient)) {
+          confirmed++;
+        }
+      });
+    }
+  });
+  return required > 0 && confirmed >= required;
+};
+
+// For dish-mode tick-off: Check if an ingredient is fully added in a specific dish.
+const isIngredientFullyAddedInDish = (ingredient: string, dish: Dish): boolean => {
+  const totalBags = dish.prepBags.length;
+  const confirmed = dish.prepBags.filter(bag =>
+    bag.addedIngredients.some((ai) => ai.name === ingredient)
+  ).length;
+  return confirmed >= totalBags;
+};
+
+// --- Main Component ---
+export default function TabTwoScreen() {
+  // No summary toggle state now – summary is always visible.
+  const { dishesStack, removeDish, updateDish, updatePrepBag } = useDishesContext();
+  const router = useRouter();
+
+  // CRUD bottom-sheet state.
   const [editingDish, setEditingDish] = useState<{ name: string; quantity: number } | null>(null);
   const [sheetQuantity, setSheetQuantity] = useState('');
 
-  // State for tick-off functionality: track ticked ingredients for each dish.
-  // For 'all' mode, use tickedIngredients; for 'dish' mode, use tickedByDish.
+  // Tick-off state.
   const [tickedIngredients, setTickedIngredients] = useState<string[]>([]);
   const [tickedByDish, setTickedByDish] = useState<Record<string, string[]>>({});
-
-  // Additional state for tick-off mode and selected dish
   const [tickOffMode, setTickOffMode] = useState<'all' | 'dish' | null>(null);
   const [selectedTickOffDish, setSelectedTickOffDish] = useState<string | null>(null);
 
-  // Bottom-sheet refs
+  // Bottom-sheet refs.
   const crudBottomSheetRef = useRef<BottomSheet>(null);
   const tickOffBottomSheetRef = useRef<BottomSheet>(null);
 
-  const handleSummaryToggle = () => {
-    setSummaryExpanded((prev) => !prev);
-  };
-
-  /**
-   * Compute aggregated ingredients across all dishes.
-   * (This aggregated list is still rendered in the summary block.)
-    */
-  const aggregatedIngredientsTotal = dishesStack.reduce(
-    (acc, dish) => {
-      const totalCount = dish.quantity; // Original count, regardless of completion
-      dish.ingredients.forEach((ingredient) => {
-        const totalWeight = ingredient.weight * totalCount;
-        const similarKey = findSimilarIngredientKey(acc, ingredient.name, 0.8);
-        if (similarKey) {
-          acc[similarKey].totalWeight += totalWeight;
-        } else {
-          acc[ingredient.name] = { totalWeight, unit: ingredient.unit || '' };
-        }
-      });
-      return acc;
-    },
-    {} as Record<string, { totalWeight: number; unit: string }>
+  // Aggregated remaining ingredients.
+  const aggregatedIngredientsRemainingObject = useMemo(
+    () => aggregatedIngredientsRemaining(dishesStack),
+    [dishesStack]
   );
-  
-  // Remaining ingredients (based on incomplete prep bags)
-  const aggregatedIngredientsRemaining = dishesStack.reduce(
-    (acc, dish) => {
-      const remainingCount = dish.prepBags.filter(bag => !bag.isComplete).length;
-      dish.ingredients.forEach((ingredient) => {
-        const totalWeight = ingredient.weight * remainingCount;
-        const similarKey = findSimilarIngredientKey(acc, ingredient.name, 0.8);
-        if (similarKey) {
-          acc[similarKey].totalWeight += totalWeight;
-        } else {
-          acc[ingredient.name] = { totalWeight, unit: ingredient.unit || '' };
-        }
-      });
-      return acc;
-    },
-    {} as Record<string, { totalWeight: number; unit: string }>
+  const aggregatedIngredientsRemainingArray = useMemo(
+    () => Object.entries(aggregatedIngredientsRemainingObject),
+    [aggregatedIngredientsRemainingObject]
   );
-  
-  const aggregatedIngredientsTotalArray = Object.entries(aggregatedIngredientsTotal);
-  const aggregatedIngredientsRemainingArray = Object.entries(aggregatedIngredientsRemaining);
 
-  /**
-   * Create a list of unique ingredients across all dishes.
-   */
+  // Unique ingredients (for tick-off "all" mode).
   const uniqueIngredients = useMemo(() => {
     return Array.from(
       dishesStack.reduce((acc, dish) => {
@@ -175,15 +184,7 @@ export default function TabTwoScreen() {
     ).map(([name, unit]) => ({ name, unit }));
   }, [dishesStack]);
 
-  /**
-   * Compile all prep bags from all dishes into a single list.
-   */
-  const allPrepBags = useMemo(() => {
-    return dishesStack.flatMap(dish => dish.prepBags || []);
-  }, [dishesStack]);
-
   // Render each dish in the prep list.
-  // (A tap opens the CRUD bottom-sheet to edit/remove that dish.)
   const renderDish = ({ item }: { item: Dish }) => (
     <TouchableOpacity style={styles.dishItem} onPress={() => openCrudSheet(item)}>
       <Text style={styles.dishName}>
@@ -192,7 +193,7 @@ export default function TabTwoScreen() {
     </TouchableOpacity>
   );
 
-  // Render aggregated ingredients in the summary block.
+  // Render each ingredient (aggregated remaining) in the summary.
   const renderIngredient = ({
     item,
   }: {
@@ -209,8 +210,7 @@ export default function TabTwoScreen() {
   };
 
   // -------------------------------
-  // CRUD Bottom-Sheet for editing a dish (prep bag)
-  // -------------------------------
+  // CRUD Bottom-Sheet for Editing a Dish.
   const openCrudSheet = (dish: Dish) => {
     setEditingDish({ name: dish.name, quantity: dish.quantity });
     setSheetQuantity(String(dish.quantity));
@@ -256,174 +256,173 @@ export default function TabTwoScreen() {
   // -------------------------------
 
   // -------------------------------
-  // Tick-Off Functionality: Group ingredients by dish.
-  // -------------------------------
-  // Toggle ticking for a given ingredient in a given dish group.
+  // Tick-Off Functionality.
+  // For 'dish' mode:
   const toggleTickForDish = (dishName: string, ingredientName: string) => {
-    setTickedByDish((prev) => {
+    setTickedByDish(prev => {
       const dishTicks = prev[dishName] || [];
       if (dishTicks.includes(ingredientName)) {
-        return { ...prev, [dishName]: dishTicks.filter((n) => n !== ingredientName) };
+        return { ...prev, [dishName]: dishTicks.filter(n => n !== ingredientName) };
       } else {
         return { ...prev, [dishName]: [...dishTicks, ingredientName] };
       }
     });
   };
 
-  // Toggle ticking for an ingredient in 'all' mode
+  // For 'all' mode:
   const toggleTickOffIngredient = (ingredientName: string) => {
-    setTickedIngredients((prev) => {
+    setTickedIngredients(prev => {
       if (prev.includes(ingredientName)) {
-        return prev.filter((name) => name !== ingredientName);
+        return prev.filter(name => name !== ingredientName);
       } else {
         return [...prev, ingredientName];
       }
     });
   };
 
-  // Render each ingredient in 'all' mode tick-off bottom-sheet
+  // Render tick-off for "all" mode.
   const renderTickOffIngredient = ({ item }: { item: { name: string; unit: string } }) => {
+    const isExhausted = isIngredientExhausted(item.name, dishesStack);
     return (
       <View style={styles.tickOffRow}>
         <CheckBox
           checked={tickedIngredients.includes(item.name)}
-          onPress={() => toggleTickOffIngredient(item.name)}
+          onPress={() => { if (!isExhausted) toggleTickOffIngredient(item.name); }}
+          disabled={isExhausted}
         />
-        <Text style={styles.tickOffText}>
+        <Text style={[styles.tickOffText, isExhausted && styles.strikethroughText]}>
           {item.name}
         </Text>
       </View>
     );
   };
 
-  // Render each dish group in the tick-off bottom-sheet for 'dish' mode.
+  // Render tick-off for "dish" mode.
   const renderTickOffDishGroup = ({ item }: { item: Dish }) => {
     const dishTicks = tickedByDish[item.name] || [];
     return (
       <View style={styles.tickOffDishGroup}>
         <Text style={styles.tickOffDishTitle}>{item.name}</Text>
-        {item.ingredients.map((ingredient, index) => (
-          <View key={index} style={styles.tickOffRow}>
-            <CheckBox
-              checked={dishTicks.includes(ingredient.name)}
-              onPress={() => toggleTickForDish(item.name, ingredient.name)}
-            />
-            <Text style={styles.tickOffText}>
-              {ingredient.name}: {ingredient.weight * item.quantity} {ingredient.unit}
-            </Text>
-          </View>
-        ))}
+        {item.ingredients.map((ingredient, index) => {
+          const totalBags = item.prepBags.length;
+          const confirmedCount = item.prepBags.filter(bag =>
+            bag.addedIngredients.some(ai => ai.name === ingredient.name)
+          ).length;
+          const isExhaustedForDish = confirmedCount >= totalBags;
+          return (
+            <View key={index} style={styles.tickOffRow}>
+              <CheckBox
+                checked={dishTicks.includes(ingredient.name)}
+                onPress={() => { if (!isExhaustedForDish) toggleTickForDish(item.name, ingredient.name); }}
+                disabled={isExhaustedForDish}
+              />
+              <Text style={[styles.tickOffText, isExhaustedForDish && styles.strikethroughText]}>
+                {ingredient.name}: {ingredient.weight * item.quantity} {ingredient.unit}
+              </Text>
+            </View>
+          );
+        })}
       </View>
     );
   };
 
-  // Open the tick-off bottom-sheet based on mode
   const openTickOffSheet = (mode: 'all' | 'dish') => {
     setTickOffMode(mode);
     setSelectedTickOffDish(null);
     setTickedByDish({});
     setTickedIngredients([]);
+    // Open tick-off bottom sheet maximized (snap to index 0 corresponds to 95% height)
     tickOffBottomSheetRef.current?.snapToIndex(0);
   };
 
-  // Confirm tick-off action
+  // Confirm tick-off by adding ticked ingredients to the prep bags.
   const handleConfirmTickOff = () => {
     if (tickOffMode === 'all') {
-      console.log("Ticked Ingredients:", tickedIngredients);
-      // Iterate through each dish and remove the ticked ingredients
       dishesStack.forEach((dish) => {
-        const updatedIngredients = dish.ingredients.filter(
-          (ingredient) => !tickedIngredients.includes(ingredient.name)
-        );
-        if (updatedIngredients.length === 0) {
-          // Remove the dish if no ingredients remain
-          removeDish(dish.name);
-        } else {
-          updateDish(dish.name, dish.quantity, updatedIngredients);
-        }
+        dish.prepBags.forEach((bag) => {
+          let updatedIngredients = [...bag.addedIngredients];
+          tickedIngredients.forEach(ingredientName => {
+            if (
+              dish.ingredients.some(ing => ing.name === ingredientName) &&
+              !updatedIngredients.some(ai => ai.name === ingredientName)
+            ) {
+              const ingredientObj = dish.ingredients.find(i => i.name === ingredientName);
+              if (ingredientObj) {
+                updatedIngredients.push(ingredientObj);
+              }
+            }
+          });
+          if (updatedIngredients.length !== bag.addedIngredients.length) {
+            updatePrepBag(bag.id, updatedIngredients);
+          }
+        });
       });
-
-      // Reset the tickedIngredients state
       setTickedIngredients([]);
       setTickOffMode(null);
       setSelectedTickOffDish(null);
-
-      Alert.alert("Ingredients Tick-Off", "Selected ingredients have been removed from all dishes.");
+      Alert.alert("Ingredients Tick-Off", "Ticked ingredients have been added to all prep bags.");
       tickOffBottomSheetRef.current?.close();
     } else if (tickOffMode === 'dish') {
-      console.log("Ticked By Dish:", tickedByDish);
-      // Iterate through each dish and remove the ticked ingredients
-      Object.entries(tickedByDish).forEach(([dishName, ingredients]) => {
-        if (ingredients.length > 0) {
-          const dish = dishesStack.find(d => d.name === dishName);
-          if (dish) {
-            const updatedIngredients = dish.ingredients.filter(
-              (ingredient) => !ingredients.includes(ingredient.name)
-            );
-            if (updatedIngredients.length === 0) {
-              removeDish(dish.name);
-            } else {
-              updateDish(dish.name, dish.quantity, updatedIngredients);
+      if (selectedTickOffDish) {
+        const dish = dishesStack.find(d => d.name === selectedTickOffDish);
+        if (dish) {
+          dish.prepBags.forEach(bag => {
+            let updatedIngredients = [...bag.addedIngredients];
+            const dishTicks = tickedByDish[selectedTickOffDish] || [];
+            dishTicks.forEach(ingredientName => {
+              if (
+                dish.ingredients.some(ing => ing.name === ingredientName) &&
+                !updatedIngredients.some(ai => ai.name === ingredientName)
+              ) {
+                const ingredientObj = dish.ingredients.find(i => i.name === ingredientName);
+                if (ingredientObj) {
+                  updatedIngredients.push(ingredientObj);
+                }
+              }
+            });
+            if (updatedIngredients.length !== bag.addedIngredients.length) {
+              updatePrepBag(bag.id, updatedIngredients);
             }
-          }
+          });
         }
-      });
-
-      // Reset the tickedByDish state
-      setTickedByDish({});
-      setTickOffMode(null);
-      setSelectedTickOffDish(null);
-
-      Alert.alert("Ingredients Tick-Off", "Selected ingredients have been removed from the respective dishes.");
-      tickOffBottomSheetRef.current?.close();
+        setTickedByDish({});
+        setTickOffMode(null);
+        setSelectedTickOffDish(null);
+        Alert.alert("Ingredients Tick-Off", "Ticked ingredients have been added to the selected dish's prep bags.");
+        tickOffBottomSheetRef.current?.close();
+      }
     }
   };
   // -------------------------------
-  // End Tick-Off Bottom-Sheet
+  // End Tick-Off Functionality
   // -------------------------------
+
+  // Advanced Mode: navigate to advanced mode.
+  const openAdvancedMode = () => {
+    console.warn("Dishes stack before navigating:", JSON.stringify(dishesStack, null, 2));
+    router.push("/advanced-mode");
+  };
 
   return (
     <GestureHandlerRootView style={styles.container}>
       <ScrollView contentContainerStyle={{ paddingBottom: 200 }}>
-        {/* SUMMARY BUTTON */}
-        <TouchableOpacity style={styles.summaryButton} onPress={handleSummaryToggle}>
-          <Text style={styles.summaryButtonText}>Summary</Text>
-        </TouchableOpacity>
+        {/* Always visible Summary Block */}
+        <Text style={styles.sectionTitle}>Dishes to Prep</Text>
+        <FlatList
+          data={dishesStack}
+          keyExtractor={(_, index) => String(index)}
+          renderItem={renderDish}
+          scrollEnabled={false}
+        />
+        <Text style={styles.sectionTitle}>Ingredients Remaining to Add</Text>
+        <FlatList
+          data={aggregatedIngredientsRemainingArray}
+          keyExtractor={([name]) => name}
+          renderItem={renderIngredient}
+          scrollEnabled={false}
+        />
 
-        {summaryExpanded && (
-          <>
-            {/* Prep List Section */}
-            <Text style={styles.sectionTitle}>Dishes to Prep</Text>
-            <FlatList
-              data={dishesStack}
-              keyExtractor={(_, index) => String(index)}
-              renderItem={renderDish}
-              scrollEnabled={false}
-            />
-
-          {/* Section for the Original Total Ingredients */}
-          <Text style={styles.sectionTitle}>Total Ingredients Required</Text>
-          <FlatList
-            data={aggregatedIngredientsTotalArray}
-            keyExtractor={([name]) => name}
-            renderItem={renderIngredient}  // you can use your existing renderIngredient
-            scrollEnabled={false}
-          />
-
-          {/* Section for the Remaining Ingredients */}
-          <Text style={styles.sectionTitle}>Ingredients Remaining to Add</Text>
-          <FlatList
-            data={aggregatedIngredientsRemainingArray}
-            keyExtractor={([name]) => name}
-            renderItem={renderIngredient}
-            scrollEnabled={false}
-          />
-          </>
-        )}
-
-        {/* -------------------------------
-            Ingredient Tick-Off Section (Outside Summary Block)
-           ------------------------------- */}
+        {/* Ingredient Tick-Off Section */}
         <View style={styles.tickOffSection}>
           <Text style={styles.sectionTitle}>Ingredient Tick-Off</Text>
           <View style={styles.tickOffOptions}>
@@ -441,35 +440,16 @@ export default function TabTwoScreen() {
             </Pressable>
           </View>
         </View>
-        {/* -------------------------------
-            End Ingredient Tick-Off Section
-           ------------------------------- */}
 
-        {/* -------------------------------
-            Advanced Mode Section (New)
-           ------------------------------- */}
+        {/* Advanced Mode Button placed below tick-off section */}
         <View style={styles.advancedModeSection}>
-          <Pressable
-            style={styles.advancedModeButton}
-            onPress={() => {
-              // 1) Log the current dishes stack
-              console.warn("Dishes stack before navigating:", JSON.stringify(dishesStack, null, 2));
-    
-              // 2) Then navigate to advanced mode
-              router.push("/advanced-mode");
-            }}
-          >
+          <Pressable style={styles.advancedModeButton} onPress={openAdvancedMode}>
             <Text style={styles.advancedModeButtonText}>Advanced View</Text>
           </Pressable>
         </View>
-        {/* -------------------------------
-            End Advanced Mode Section
-           ------------------------------- */}
       </ScrollView>
 
-      {/* -------------------------------
-          CRUD Bottom-Sheet for Editing a Dish (prep bag)
-         ------------------------------- */}
+      {/* CRUD Bottom-Sheet for Editing a Dish */}
       <BottomSheet
         ref={crudBottomSheetRef}
         index={-1}
@@ -508,17 +488,12 @@ export default function TabTwoScreen() {
           )}
         </BottomSheetView>
       </BottomSheet>
-      {/* -------------------------------
-          End CRUD Bottom-Sheet
-         ------------------------------- */}
 
-      {/* -------------------------------
-          Bottom-Sheet for Ingredient Tick-Off (Grouped by Dish or All)
-         ------------------------------- */}
+      {/* Bottom-Sheet for Ingredient Tick-Off (Maximized) */}
       <BottomSheet
         ref={tickOffBottomSheetRef}
         index={-1}
-        snapPoints={tickOffMode === 'all' ? ['60%', '90%'] : ['50%', '80%']} // Increased snap points for better visibility
+        snapPoints={['95%', '50%']}
         enablePanDownToClose={true}
         onChange={() => {}}
         backgroundStyle={styles.bottomSheetBackground}
@@ -529,14 +504,13 @@ export default function TabTwoScreen() {
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
               <View style={styles.sheetInnerContainer}>
                 <Text style={styles.bottomSheetTitle}>Tick Off All Ingredients</Text>
-                {/* Scrollable Container for FlatList */}
                 <View style={styles.scrollableContainer}>
                   <FlatList
                     data={uniqueIngredients}
                     keyExtractor={(item) => item.name}
                     renderItem={renderTickOffIngredient}
                     contentContainerStyle={{ paddingBottom: 20 }}
-                    nestedScrollEnabled={true} // Enables nested scrolling
+                    nestedScrollEnabled={true}
                   />
                 </View>
                 <Pressable
@@ -557,7 +531,6 @@ export default function TabTwoScreen() {
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
               <View style={styles.sheetInnerContainer}>
                 <Text style={styles.bottomSheetTitle}>Tick Off Ingredients from a Dish</Text>
-                {/* Dropdown or FlatList to select a dish */}
                 <FlatList
                   data={dishesStack}
                   keyExtractor={(item) => item.name}
@@ -572,7 +545,7 @@ export default function TabTwoScreen() {
                       <Text style={styles.selectDishText}>{item.name}</Text>
                     </TouchableOpacity>
                   )}
-                  style={{ maxHeight: 150 }} // Limit height to prevent overflow
+                  style={{ maxHeight: 150 }}
                   nestedScrollEnabled={true}
                 />
                 {selectedTickOffDish && (
@@ -581,24 +554,28 @@ export default function TabTwoScreen() {
                       Ingredients for "{selectedTickOffDish}"
                     </Text>
                     <FlatList
-                      data={dishesStack.find((dish) => dish.name === selectedTickOffDish)?.ingredients || []}
+                      data={dishesStack.find(d => d.name === selectedTickOffDish)?.ingredients || []}
                       keyExtractor={(item) => item.name}
-                      renderItem={({ item }) => (
-                        <View style={styles.tickOffRow}>
-                          <CheckBox
-                            checked={
-                              tickedByDish[selectedTickOffDish]?.includes(item.name) || false
-                            }
-                            onPress={() =>
-                              toggleTickForDish(selectedTickOffDish, item.name)
-                            }
-                          />
-                          <Text style={styles.tickOffText}>
-                            {item.name}: {item.weight * dishesStack.find(d => d.name === selectedTickOffDish)!.quantity} {item.unit}
-                          </Text>
-                        </View>
-                      )}
-                      // Remove scroll from inner FlatList; outer FlatList handles it
+                      renderItem={({ item }) => {
+                        const dish = dishesStack.find(d => d.name === selectedTickOffDish)!;
+                        const totalBags = dish.prepBags.length;
+                        const confirmedCount = dish.prepBags.filter(bag =>
+                          bag.addedIngredients.some(ai => ai.name === item.name)
+                        ).length;
+                        const isExhaustedForDish = confirmedCount >= totalBags;
+                        return (
+                          <View style={styles.tickOffRow}>
+                            <CheckBox
+                              checked={tickedByDish[selectedTickOffDish]?.includes(item.name) || false}
+                              onPress={() => { if (!isExhaustedForDish) toggleTickForDish(selectedTickOffDish, item.name); }}
+                              disabled={isExhaustedForDish}
+                            />
+                            <Text style={[styles.tickOffText, isExhaustedForDish && styles.strikethroughText]}>
+                              {item.name}: {item.weight * dish.quantity} {item.unit}
+                            </Text>
+                          </View>
+                        );
+                      }}
                       scrollEnabled={false}
                     />
                   </View>
@@ -618,9 +595,7 @@ export default function TabTwoScreen() {
           )}
         </BottomSheetView>
       </BottomSheet>
-      {/* -------------------------------
-          End Ingredient Tick-Off Bottom-Sheet
-         ------------------------------- */}
+      {/* End Ingredient Tick-Off Bottom-Sheet */}
     </GestureHandlerRootView>
   );
 }
@@ -631,17 +606,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   summaryButton: {
-    backgroundColor: '#4CAF50',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 5,
-    alignSelf: 'center',
-    marginTop: 20,
+    // Removed summary button styling since it's no longer rendered.
   },
   summaryButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
+    // Removed summary button text styling.
   },
   sectionTitle: {
     color: '#fff',
@@ -674,7 +642,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
   },
-  // Tick-Off section styling
   tickOffSection: {
     marginTop: 30,
     paddingHorizontal: 10,
@@ -691,8 +658,8 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     marginHorizontal: 10,
     flex: 1,
-    justifyContent: 'center', // Aligns children vertically in the center
-    alignItems: 'center',     // horizontally centers children
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   tickOffOptionText: {
     color: '#fff',
@@ -712,23 +679,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginLeft: 10,
   },
-  tickOffButtonContainer: {
-    alignItems: 'center',
-    marginTop: 15,
-  },
-  tickOffButton: {
-    backgroundColor: '#4CAF50',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 5,
-    marginTop: 15,
-  },
-  tickOffButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  disabledButton: {
-    backgroundColor: '#888',
+  strikethroughText: {
+    textDecorationLine: 'line-through',
+    color: '#888',
   },
   tickOffConfirmButton: {
     backgroundColor: '#4CAF50',
@@ -741,7 +694,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
   },
-  // Advanced Mode Section Styles
+  disabledButton: {
+    backgroundColor: '#888',
+  },
   advancedModeSection: {
     marginTop: 30,
     paddingHorizontal: 10,
@@ -758,14 +713,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 16,
   },
-  // Common Styles
-  noPrepBagsText: {
-    color: '#fff',
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 10,
-  },
-  // Bottom-Sheet / CRUD styles
   bottomSheetBackground: {
     backgroundColor: '#1e1e1e',
     borderRadius: 15,
@@ -781,8 +728,8 @@ const styles = StyleSheet.create({
   },
   sheetInnerContainer: {
     width: '100%',
-    flex: 1, // Allow the container to take up full space
-    justifyContent: 'space-between', // Distribute space between FlatList and button
+    flex: 1,
+    justifyContent: 'space-between',
     alignItems: 'center',
   },
   bottomSheetTitle: {
@@ -823,7 +770,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
   },
-  // Checkbox styles for tick-off section
   checkboxContainer: {
     width: 24,
     height: 24,
@@ -847,7 +793,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
   },
-  // Tick-Off Dish Group styles (group ingredients by dish)
   tickOffDishGroup: {
     backgroundColor: '#1e1e1e',
     borderRadius: 5,
@@ -862,7 +807,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: 'center',
   },
-  // Styles for selecting a dish in 'dish' mode
   selectDishItem: {
     backgroundColor: '#1e1e1e',
     borderRadius: 5,
@@ -889,9 +833,70 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: 'center',
   },
-  // New style for the scrollable container within the bottom sheet
   scrollableContainer: {
-    flex: 1, // Occupy all available vertical space
+    flex: 1,
     width: '100%',
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    width: "100%",
+    maxHeight: "100%",
+    backgroundColor: "rgba(0,0,0,0.8)",
+    borderRadius: 0,
+    padding: scale(16),
+  },
+  modalHeaderText: {
+    fontSize: moderateScale(18),
+    fontWeight: "bold",
+    marginBottom: verticalScale(8),
+    textAlign: "center",
+    color: "#fff",
+  },
+  modalScroll: {
+    marginBottom: verticalScale(8),
+  },
+  ingredientRow: {
+    paddingVertical: verticalScale(4),
+    borderBottomWidth: 1,
+    borderBottomColor: "#555",
+  },
+  ingredientName: {
+    fontSize: moderateScale(16),
+    color: "#fff",
+  },
+  ingredientAdded: {
+    color: "green",
+  },
+  closeButton: {
+    alignSelf: "center",
+    backgroundColor: "#4CAF50",
+    paddingVertical: verticalScale(8),
+    paddingHorizontal: scale(16),
+    borderRadius: scale(4),
+  },
+  closeButtonText: {
+    color: "#fff",
+    fontSize: moderateScale(16),
+    fontWeight: "bold",
+  },
+  // Drag Handle styles.
+  dragHandle: {
+    position: "absolute",
+    top: scale(4),
+    right: scale(4),
+    padding: scale(4),
+    backgroundColor: "#333",
+    borderRadius: scale(4),
+  },
+  dragHandleText: {
+    color: "#fff",
+    fontSize: moderateScale(14),
+  },
 });
+
+export { TabTwoScreen };

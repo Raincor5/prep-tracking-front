@@ -9,6 +9,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Dimensions,
+  Modal,
 } from "react-native";
 import {
   SafeAreaProvider,
@@ -22,6 +23,17 @@ import { useIngredientsContext } from "@/context/IngredientsContext";
 import { IngredientChip } from "./IngredientChip"; // Adjust the path if needed
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useGestureManager } from "@/context/GestureManagerContext";
+// Import BlurView (make sure to install expo-blur or an equivalent package)
+import { BlurView } from "expo-blur";
+
+// Scaling utilities based on device dimensions.
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+const guidelineBaseWidth = 350;
+const guidelineBaseHeight = 680;
+const scale = (size: number) => (SCREEN_WIDTH / guidelineBaseWidth) * size;
+const verticalScale = (size: number) => (SCREEN_HEIGHT / guidelineBaseHeight) * size;
+const moderateScale = (size: number, factor = 0.5) =>
+  size + (scale(size) - size) * factor;
 
 // Utility: Create a matrix from an array of prepBags.
 const createMatrix = (prepBags: any[], columnHeight = 8) => {
@@ -56,12 +68,10 @@ export default function AdvancedModeScreen() {
   const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
   const [frozenIngredientOrder, setFrozenIngredientOrder] = useState<string[] | null>(null);
   const [showMissing, setShowMissing] = useState(false);
+  // NEW: State to track the prep bag whose details should be shown.
+  const [activeBagDetails, setActiveBagDetails] = useState<{ dishId: string; bag: any } | null>(null);
   const ingredientScrollRef = useRef<ScrollView>(null);
-
-  // Create a ref for the flat list to allow simultaneous gesture handling.
   const flatListRef = useRef(null);
-
-  // Use the gesture manager from context.
   const { isSwipeEnabled, isScrollEnabled, setGestureState } = useGestureManager();
 
   // Update gesture manager state when selected ingredients change.
@@ -75,12 +85,18 @@ export default function AdvancedModeScreen() {
       if (!dish) return;
       const bag = dish.prepBags.find((b: any) => b && b.id === bagId);
       if (!bag) return;
-      const allowed = new Set(dish.ingredients.map((ing: any) => ing.name));
-      selectedIngredients.forEach((ing) => {
-        if (!allowed.has(ing)) return;
-        const confirmed = bag.addedIngredients.some((ai: any) => ai.name === ing);
-        updatePending(bagId, ing, !confirmed);
-      });
+      if (selectedIngredients.length > 0) {
+        // When ingredients are selected, toggle pending updates.
+        const allowed = new Set(dish.ingredients.map((ing: any) => ing.name));
+        selectedIngredients.forEach((ing) => {
+          if (!allowed.has(ing)) return;
+          const confirmed = bag.addedIngredients.some((ai: any) => ai.name === ing);
+          updatePending(bagId, ing, !confirmed);
+        });
+      } else {
+        // Otherwise, show the bag's details in a modal.
+        setActiveBagDetails({ dishId, bag });
+      }
     },
     [dishesStack, selectedIngredients, updatePending]
   );
@@ -134,11 +150,11 @@ export default function AdvancedModeScreen() {
     ingredients.sort((a, b) => {
       const aEx = isIngredientExhausted(a, dishesStack) ? 1 : 0;
       const bEx = isIngredientExhausted(b, dishesStack) ? 1 : 0;
-      if (aEx !== bEx) return aEx - bEx; // non-exhausted first
+      if (aEx !== bEx) return aEx - bEx;
       return frequencyMap[b] - frequencyMap[a];
     });
     return ingredients;
-  }, [frequencyMap, focusedDishes, frozenIngredientOrder, dishesStack]);
+  }, [frequencyMap, frozenIngredientOrder, dishesStack]);
 
   useEffect(() => {
     ingredientScrollRef.current?.scrollTo({ x: 0, animated: true });
@@ -150,7 +166,7 @@ export default function AdvancedModeScreen() {
     );
   }, []);
 
-  // Disable dish dragging when ingredients are selected so that swipe gesture on bag cells takes priority.
+  // Disable dish dragging when ingredients are selected so that swipe gestures on bag cells take priority.
   const disableDrag = selectedIngredients.length > 0;
 
   const confirmAllUpdates = useCallback(() => {
@@ -176,15 +192,12 @@ export default function AdvancedModeScreen() {
     setSelectedIngredients([]);
   }, [dishesStack, getEffectiveCount, confirmUpdates, updatePrepBag, showMissing]);
 
+  // Render each dish. A dedicated drag handle is provided so that tapping on a prep bag cell isn’t intercepted.
   const renderItem = useCallback(
     ({ item, drag, isActive }: RenderItemParams<typeof dishesStack[0]>) => {
       const matrix = createMatrix(item.prepBags, 8);
       return (
-        <TouchableOpacity
-          onLongPress={!disableDrag ? drag : undefined}
-          disabled={isActive || disableDrag}
-          style={[styles.dishItem, { opacity: isActive ? 0.8 : 1 }]}
-        >
+        <View style={[styles.dishItem, { opacity: isActive ? 0.8 : 1 }]}>
           <DraggableDish
             dishId={item.id}
             label={item.name}
@@ -195,46 +208,57 @@ export default function AdvancedModeScreen() {
             selectedIngredients={selectedIngredients}
             isSwipeEnabled={isSwipeEnabled}
           />
-        </TouchableOpacity>
+          {!disableDrag && (
+            <TouchableOpacity style={styles.dragHandle} onLongPress={drag}>
+              <Text style={styles.dragHandleText}>≡</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       );
     },
-    [disableDrag, onBagPress, dishesStack, selectedIngredients, isSwipeEnabled]
+    [disableDrag, onBagPress, selectedIngredients, isSwipeEnabled]
   );
 
   return (
-    // Wrap the screen in GestureHandlerRootView; GestureManagerProvider should be set higher in the tree.
     <GestureHandlerRootView style={styles.root}>
-      <View style={styles.container}>
-        <SafeAreaProvider>
-          <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]} edges={["left", "right", "bottom"]}>
-            <ScrollView
-              ref={ingredientScrollRef}
-              horizontal
-              contentContainerStyle={styles.ingredientBarContent}
-              style={styles.ingredientBar}
-              showsHorizontalScrollIndicator={false}
-              scrollEnabled={true}
-            >
-              {allIngredients.length === 0 ? (
-                <Text style={styles.emptyIngredientsText}>No ingredients</Text>
-              ) : (
-                allIngredients.map((name) => (
-                  <IngredientChip
-                    key={name}
-                    name={name}
-                    selected={selectedIngredients.includes(name)}
-                    onToggle={() => toggleIngredient(name)}
-                    exhausted={isIngredientExhausted(name, dishesStack)}
-                  />
-                ))
-              )}
-            </ScrollView>
-            {disableDrag && (
-              <TouchableOpacity style={styles.confirmButton} onPress={confirmAllUpdates}>
-                <Text style={styles.confirmButtonText}>Confirm Ingredients</Text>
-              </TouchableOpacity>
-            )}
-            <View style={[styles.listContainer, { height: Dimensions.get("window").height * 0.7 }]}>
+      <SafeAreaProvider>
+        <SafeAreaView
+          style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+          edges={["top", "left", "right", "bottom"]}
+        >
+          <View style={styles.modalContainer}>
+            {/* Header */}
+            <View style={styles.headerContainer}>
+              <Text style={styles.modalTitle}>Advanced Mode</Text>
+              <View style={styles.modalDivider} />
+            </View>
+            {/* Ingredients */}
+            <View style={styles.ingredientContainer}>
+              <Text style={styles.ingredientTitle}>Select Ingredients</Text>
+              <ScrollView
+                ref={ingredientScrollRef}
+                horizontal
+                contentContainerStyle={styles.ingredientBarContent}
+                style={styles.ingredientBar}
+                showsHorizontalScrollIndicator={false}
+              >
+                {allIngredients.length === 0 ? (
+                  <Text style={styles.emptyIngredientsText}>No ingredients</Text>
+                ) : (
+                  allIngredients.map((name) => (
+                    <IngredientChip
+                      key={name}
+                      name={name}
+                      selected={selectedIngredients.includes(name)}
+                      onToggle={() => toggleIngredient(name)}
+                      exhausted={isIngredientExhausted(name, dishesStack)}
+                    />
+                  ))
+                )}
+              </ScrollView>
+            </View>
+            {/* Draggable Dishes List */}
+            <View style={styles.listContainer}>
               <DraggableFlatList
                 ref={flatListRef}
                 data={dishesStack}
@@ -250,31 +274,86 @@ export default function AdvancedModeScreen() {
                 scrollEnabled={isScrollEnabled}
               />
             </View>
-          </SafeAreaView>
-        </SafeAreaProvider>
-      </View>
+          </View>
+          {/* Confirmation Button */}
+          {disableDrag && (
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity style={styles.confirmButton} onPress={confirmAllUpdates}>
+                <Text style={styles.confirmButtonText}>Confirm Ingredients</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {/* Ingredient Showcase Modal for Prep Bag Details */}
+          {activeBagDetails && (
+            <Modal
+              visible={true}
+              transparent={true}
+              animationType="fade"
+              onRequestClose={() => setActiveBagDetails(null)}
+            >
+              <BlurView intensity={50} tint="dark" style={styles.modalOverlay}>
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalHeaderText}>Prep Bag Details</Text>
+                  <ScrollView style={styles.modalScroll}>
+                    {activeBagDetails.bag.ingredients.map((ing: any) => {
+                      const isAdded = activeBagDetails.bag.addedIngredients.some(
+                        (ai: any) => ai.name === ing.name
+                      );
+                      return (
+                        <View key={ing.name} style={styles.ingredientRow}>
+                          <Text style={[styles.ingredientName, isAdded && styles.ingredientAdded]}>
+                            {ing.name}: {ing.weight} {ing.unit} {isAdded ? "(Added)" : "(Missing)"}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+                  <TouchableOpacity style={styles.closeButton} onPress={() => setActiveBagDetails(null)}>
+                    <Text style={styles.closeButtonText}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </BlurView>
+            </Modal>
+          )}
+        </SafeAreaView>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
 
-
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  safeArea: { flex: 1, backgroundColor: "#121212", paddingTop: 0 },
-  container: { flex: 1, paddingHorizontal: 10 },
-  ingredientBar: { marginBottom: 2 },
-  ingredientBarContent: { alignItems: "center", paddingHorizontal: 5 },
-  emptyIngredientsText: { color: "#fff", marginLeft: 10 },
-  listContainer: { height: Dimensions.get("window").height * 0.7 },
-  listContent: { paddingVertical: 0 },
-  dishItem: { marginRight: 5 },
-  confirmButton: {
-    backgroundColor: "#4CAF50",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    alignSelf: "center",
-    marginBottom: 5,
-  },
-  confirmButtonText: { color: "#fff", fontWeight: "bold" },
-});
+  root: { flex: 1, backgroundColor: "#121212" },
+  safeArea: { flex: 1, backgroundColor: "#121212" },
+  modalContainer: { flex: 1, paddingHorizontal: scale(16), paddingBottom: verticalScale(8) },
+  headerContainer: { paddingVertical: verticalScale(6), alignItems: "center" },
+  modalTitle: { color: "#fff", fontSize: moderateScale(20), fontWeight: "700" },
+  modalDivider: { width: "90%", height: verticalScale(1), backgroundColor: "#555", marginTop: verticalScale(4) },
+  ingredientContainer: { marginVertical: verticalScale(5) },
+  ingredientTitle: { color: "#fff", fontSize: moderateScale(16), fontWeight: "600", marginBottom: verticalScale(4), marginHorizontal: scale(4) },
+  ingredientBar: { marginBottom: verticalScale(6) },
+  ingredientBarContent: { alignItems: "center", paddingHorizontal: scale(4) },
+  emptyIngredientsText: { color: "#fff", marginLeft: scale(8) },
+  listContainer: { flex: 1 },
+  listContent: { paddingVertical: verticalScale(6) },
+  // Define dishItem once:
+  dishItem: { marginRight: scale(6), position: "relative" },
+  dragHandle: { position: "absolute", top: scale(4), right: scale(4), padding: scale(4), backgroundColor: "#333", borderRadius: scale(4) },
+  dragHandleText: { color: "#fff", fontSize: moderateScale(14) },
+  buttonContainer: { paddingHorizontal: scale(16), paddingVertical: verticalScale(8), backgroundColor: "#121212" },
+  confirmButton: { backgroundColor: "#4CAF50", paddingVertical: verticalScale(10), paddingHorizontal: scale(20), borderRadius: moderateScale(8), alignSelf: "center" },
+  confirmButtonText: { color: "#fff", fontWeight: "bold", fontSize: moderateScale(16) },
+  modalOverlay: { flex: 1, justifyContent: "center", alignItems: "center" },
+  modalContent: { width: "80%", maxHeight: "70%", backgroundColor: "rgba(0,0,0,0.8)", borderRadius: scale(8), padding: scale(16) },
+  modalHeaderText: { fontSize: moderateScale(18), fontWeight: "bold", marginBottom: verticalScale(8), textAlign: "center", color: "#fff" },
+  modalScroll: { marginBottom: verticalScale(8) },
+  ingredientRow: { paddingVertical: verticalScale(4), borderBottomWidth: 1, borderBottomColor: "#555" },
+  ingredientName: { fontSize: moderateScale(16), color: "#fff" },
+  ingredientAdded: { color: "green" },
+  closeButton: { alignSelf: "center", backgroundColor: "#4CAF50", paddingVertical: verticalScale(8), paddingHorizontal: scale(16), borderRadius: scale(4) },
+  closeButtonText: { color: "#fff", fontSize: moderateScale(16), fontWeight: "bold" },
+  advancedModeSection: { marginTop: 30, paddingHorizontal: 10, alignItems: "center" },
+  advancedModeButton: { backgroundColor: "#FF5722", paddingVertical: 12, paddingHorizontal: 25, borderRadius: 5 },
+  advancedModeButtonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
+}) as any;
+
+
